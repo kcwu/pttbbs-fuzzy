@@ -131,3 +131,7 @@ install: $(PROG)
 
 clean:
 	rm -f $(OBJS) $(PROG)
+
+pfterm:
+	$(CC) -o pfterm -D_PFTERM_TEST_MAIN pfterm.c
+

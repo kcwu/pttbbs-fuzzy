@@ -2538,7 +2538,7 @@ int main(int argc, char* argv[])
 
     endwin();
     printf("\ncomplete. enter to exit.\n");
-    getchar();
+    //getchar();
     return 0;
 }
 #endif // _PFTERM_TEST_MAIN
