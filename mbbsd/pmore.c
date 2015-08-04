@@ -100,7 +100,7 @@
 #define PMORE_USE_ASCII_MOVIE           // support ascii movie
 #define PMORE_USE_INTERNAL_HELP         // display pmore internal help
 #define PMORE_USE_REPLYKEY_HINTS        // prompt user the keys to reply/commenting
-#define PMORE_HAVE_SYNCNOW              // system needs calling sync API
+#undef PMORE_HAVE_SYNCNOW              // system needs calling sync API
 #define PMORE_HAVE_VKEY                 // input system is vkey compatible
 #define PMORE_IGNORE_UNKNOWN_NAVKEYS    // does not return for all unknown keys
 //#define PMORE_AUTONEXT_ON_PAGEFLIP    // change file when page up/down reaches end
@@ -3206,6 +3206,7 @@ pmore_Help(void *ctx, int (*help_handler)(int y, void *ctx))
     if (help_handler)
         help_handler(y, ctx);
     else
+#undef  PRESSANYKEY
 #ifdef  PRESSANYKEY
         PRESSANYKEY();
 #else
@@ -3258,6 +3259,12 @@ mf_str2float(unsigned char *p, unsigned char *end, float *pf)
 MFPROTO int
 mf_movieWaitKey(struct timeval *ptv, int dorefresh)
 {
+#if 1
+    int c = vkey();
+    if (mf_movieMaskedInput(c))
+	return c % 2 ? 0 : 1;
+    return c;
+#else
     int sel = 0;
     fd_set readfds;
     int c = 0;
@@ -3309,6 +3316,7 @@ mf_movieWaitKey(struct timeval *ptv, int dorefresh)
 #endif // PMORE_HAVE_SYNCNOW
 
     return (sel == 0) ? 0 : 1;
+#endif
 }
 
 // type : 1 = option selection, 0 = normal
@@ -4389,6 +4397,459 @@ mf_movieNextLine(unsigned char *frame)
         frame++;
 
     return frame;
+}
+
+#endif
+
+#ifdef FUZZY_PMORE_MAIN
+
+// cache.c
+void setutmpmode(unsigned int mode) { }
+
+// term.c
+void bell() {}
+
+// vtuikit.c
+void vfill(int n, int flags, const char *s){}
+void prints(const char*fmt,...) {}
+void vs_footer(const char *caption, const char *msg) {}
+void vs_hdr(const char *title) {}
+void mvouts(int y, int x, const char *str) {}
+int vmsg(const char *msg) {
+    int i = 0;
+    do { i = vkey(); } while( i == 0 );
+    return i;
+}
+
+// pfterm.c
+void refresh() {}
+void move(int x, int y) {}
+void clear() {}
+void outs(const char *s) { if (!s) return; while (*s) outc(*s++); }
+void outns(const char *s, int n) { if (!s) return; while (*s && n-- > 0) outc(*s++); }
+void scroll() {}
+void rscroll() {}
+void    clrtobot    (void) {}
+void    grayout     (int y, int end, int level) {}
+void outc(unsigned char c) { }
+void clrtoeol(void) {}
+
+// var.c
+time4_t now = 0;
+int             KEY_ESC_arg;
+int             b_lines = 23; // bottom line of screen (= t_lines - 1)
+int             t_lines = 24; // term lines
+int             p_lines = 20; // 扣掉 header(3), footer(1), 畫面上可以顯示資料的行數
+int             t_columns = 80;
+
+size_t g_file_mem_size;
+size_t g_userinput_size;
+char* g_file_mem;
+char* g_userinput;
+char* g_userinput_ptr;
+char* g_userinput_end;
+
+static int
+getdata2vgetflag(int echo)
+{
+    assert(echo != GCARRY);
+
+    if (echo == LCECHO)
+	echo = VGET_LOWERCASE;
+    else if (echo == NUMECHO)
+	echo = VGET_DIGITS;
+    else if (echo == NOECHO)
+	echo = VGETSET_NOECHO;
+    else if (echo == PASSECHO)
+	echo = VGETSET_PASSWORD;
+    else
+	echo = VGET_DEFAULT;
+
+    return echo;
+}
+int
+getdata_buf(int line, int col, const char *prompt, char *buf, int len, int echo)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), buf);
+}
+
+int
+getdata_str(int line, int col, const char *prompt, char *buf, int len, int echo,
+            const char *defaultstr)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), defaultstr);
+}
+
+int
+getdata(int line, int col, const char *prompt, char *buf, int len, int echo)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), "");
+}
+
+#undef ISDBCSAWARE
+#define ISDBCSAWARE()	(1)
+#ifdef DBCSAWARE
+#   define CHKDBCSTRAIL(_buf,_i) (ISDBCSAWARE() && DBCS_Status(_buf, _i) == DBCS_TRAILING)
+#else  // !DBCSAWARE
+#   define CHKDBCSTRAIL(buf,i) (0)
+#endif // !DBCSAWARE
+
+int
+vgetstr(char *_buf, int len, int flags, const char *defstr)
+{
+    // rt.iend points to NUL address, and
+    // rt.icurr points to cursor.
+    int line, col;
+    int abort = 0, dirty = 0;
+    int c = 0;
+
+    // callback
+
+    // always use internal buffer to prevent temporary input issue.
+    char buf[STRLEN] = "";  // zero whole.
+
+    // runtime structure
+    VGET_RUNTIME    rt = { buf, len > STRLEN ? STRLEN : len };
+
+    // it is wrong to design input with larger buffer
+    // than STRLEN. Although we support large screen,
+    // inputting huge line will just make troubles...
+    if (len > STRLEN) len = STRLEN;
+    assert(len <= (int)sizeof(buf) && len >= 2);
+
+    // adjust flags
+    if (flags & (VGET_NOECHO | VGET_DIGITS))
+	flags |= VGET_NO_NAV_HISTORY;
+
+    // memset(buf, 0, len);
+    if (defstr && *defstr)
+    {
+	strlcpy(buf, defstr, len);
+	strip_ansi(buf, buf, STRIP_ALL); // safer...
+	rt.icurr = rt.iend = strlen(buf);
+    }
+
+
+    // main loop
+    while (!abort)
+    {
+	if (dirty)
+	{
+	    dirty = 0;
+	}
+
+	if (!(flags & VGET_NOECHO))
+	{
+	    // print current buffer
+	    SOLVE_ANSI_CACHE();
+	    clrtoeol();
+	    SOLVE_ANSI_CACHE();
+
+	    if (!(flags & VGET_TRANSPARENT))
+		outs(VCLR_INPUT_FIELD); // change color to prompt fields
+
+            if (flags & VGET_PASSWORD) {
+                int i;
+                for (i = 0; i < rt.iend; i++)  {
+                    outc('*');
+                }
+                for (; i < len; i++) {
+                    outc(' ');
+                }
+            } else {
+                vfill(len, 0, buf);
+            }
+
+	    if (!(flags & VGET_TRANSPARENT))
+		outs(ANSI_RESET);
+	} else {
+	    // to simulate the "clrtoeol" behavior...
+	    // XXX make this call only once? or not?
+	    clrtoeol();
+	}
+	c = vkey();
+
+
+	// standard key bindings
+	// note: if you processed anything, you must use 'continue' instead of 'break'.
+
+
+	// the basic keys
+	switch(c)
+	{
+	    // exiting keys
+	    case KEY_ENTER:
+		abort = 1;
+		continue;
+
+	    case Ctrl('C'):
+		rt.icurr = rt.iend = 0;
+		buf[0] = 0;
+		buf[1] = c; // XXX this is a dirty hack...
+		abort = 1;
+		continue;
+
+	    // standard editing keys: backspace
+	    case KEY_BS:
+		if (rt.icurr > 0) {
+		    // kill previous one charracter.
+		    memmove(buf+rt.icurr-1, buf+rt.icurr, rt.iend-rt.icurr+1);
+		    rt.icurr--; rt.iend--;
+		    dirty = 1;
+		} else
+		    bell();
+		if (rt.icurr > 0 && CHKDBCSTRAIL(buf, rt.icurr)) {
+		    // kill previous one charracter.
+		    memmove(buf+rt.icurr-1, buf+rt.icurr, rt.iend-rt.icurr+1);
+		    rt.icurr--; rt.iend--;
+		    dirty = 1;
+		}
+		continue;
+	}
+
+	// all special keys were processed, now treat as 'input data'.
+
+	// content filter
+	if (c < ' ' || c >= 0xFF)
+	{
+	    bell(); continue;
+	}
+	if ((flags & VGET_DIGITS) &&
+		( !isascii(c) || !isdigit(c)))
+	{
+	    bell(); continue;
+	}
+	if (flags & VGET_LOWERCASE)
+	{
+	    if (!isascii(c))
+	    {
+		bell(); continue;
+	    }
+	    c = tolower(c);
+	}
+	if  (flags & VGET_ASCII_ONLY)
+	{
+	    if (!isascii(c) || !isprint(c))
+	    {
+		bell(); continue;
+	    }
+	}
+
+	// size check
+	if(rt.iend+1 >= len)
+	{
+	    bell(); continue;
+	}
+
+	// prevent incomplete DBCS
+	if (c > 0x80 && vkey_is_ready() &&
+		len - rt.iend < 3)	// we need 3 for DBCS+NUL.
+	{
+	    // XXX should we purge here, or wait the final DBCS_safe_trim?
+	    bell(); continue;
+	}
+
+	// size check again, due to data callback.
+	if(rt.iend+1 >= len)
+	{
+	    bell(); continue;
+	}
+
+	// add one character.
+	memmove(buf+rt.icurr+1, buf+rt.icurr, rt.iend-rt.icurr+1);
+	buf[rt.icurr++] = c;
+	rt.iend++;
+	dirty = 1;
+    }
+
+    assert(rt.iend >= 0 && rt.iend < len);
+    buf[rt.iend] = 0;
+
+    DBCS_safe_trim(buf);
+
+    // final filtering
+    if (rt.iend && (flags & VGET_LOWERCASE))
+	buf[0] = tolower(buf[0]);
+
+
+    // copy buffer!
+    memcpy(_buf, buf, len);
+
+
+    /* because some code then outs so change new line.*/
+
+    return rt.iend;
+}
+
+int vkey_is_ready(void) { return g_userinput_ptr != g_userinput_end; }
+int dogetch() {
+    unsigned char c;
+    if (g_userinput_ptr == g_userinput_end)
+	exit(0);
+    c = *g_userinput_ptr++;
+    if (c == KEY_CR) {
+	if (g_userinput_ptr < g_userinput_end &&
+		*g_userinput_ptr == KEY_LF)
+	    g_userinput_ptr++;
+	return KEY_ENTER;
+    } else if (c == KEY_LF)
+	return KEY_UNKNOWN;
+    return c;
+}
+
+static VtkbdCtx vtkbd_ctx;
+int vkey(void) {
+    int ch;
+
+    while (1)
+    {
+	ch = dogetch();
+
+	// convert virtual terminal keys
+	ch = vtkbd_process(ch, &vtkbd_ctx);
+	switch(ch)
+	{
+	    case KEY_INCOMPLETE:
+		// XXX what if endless?
+		continue;
+
+	    case KEY_ESC:
+		KEY_ESC_arg = vtkbd_ctx.esc_arg;
+		return ch;
+
+	    case KEY_UNKNOWN:
+		return ch;
+
+	    // common global hot keys...
+	    case Ctrl('L'):
+		continue;
+	}
+
+	return ch;
+    }
+    // should not reach here. just to make compiler happy.
+    return ch;
+}
+
+int
+expand_esc_star(char *buf, const char *src, int szbuf)
+{
+    assert(*src == KEY_ESC && *(src+1) == '*');
+    src += 2;
+    switch (*src) {
+        // secure content (return 1)
+        case 't':   // current time.
+            strlcpy(buf, "12/31/2007 00:00:00 Mon", szbuf);
+            return 1;
+        // insecure content (return 2)
+        case 's':   // current user id
+	    {
+		char userid[IDLEN + 1] = "abcdefghijkl";
+		userid[vkey() % IDLEN] = '\0';
+		strlcpy(buf, userid, szbuf);
+	    }
+            return 2;
+        case 'l':   // current user logins
+            snprintf(buf, szbuf, "%d", 0);
+            return 2;
+        case 'p':   // current user posts
+            snprintf(buf, szbuf, "%d", 0);
+            return 2;
+    }
+
+    // unknown characters, return from star.
+    strlcpy(buf, src-1, szbuf);
+    return 0;
+}
+
+// ----------------------------------------------------------------
+const char* load_file(const char* fn, size_t* size) {
+    FILE* fp;
+    struct stat     st;
+    char* p = NULL;
+    assert(size);
+    if (!stat(fn, &st))
+        *size = st.st_size;
+    p = malloc(*size);
+    fp = fopen(fn, "rb");
+    assert(fp);
+    fread(p, *size, 1, fp);
+    fclose(fp);
+
+    return p;
+}
+
+#define SEPARATOR_SIZE 6
+#define SEPARATOR (char)0xab
+const char* find_separator(const char* buf, size_t size) {
+    int found;
+    const char* p= buf;
+
+    while (p < buf + size) {
+	p = memchr(p, SEPARATOR, size - (p-buf));
+	if (!p || p + SEPARATOR_SIZE > buf + size)
+	    return NULL;
+
+	found = 1;
+	for (int i = 0; i < SEPARATOR_SIZE; i++)
+	    if (p[i] != SEPARATOR) {
+		found = 0;
+		break;
+	    }
+	if (found)
+	    return p;
+	p++;
+    }
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
+    FILE *fp;
+    const char* filename_fn = argv[1];
+    if (argc < 2) {
+	printf("%s: filename_fn\n", argv[0]);
+	return 0;
+    }
+
+    {
+	size_t size;
+	const char* tmp = load_file(filename_fn, &size);
+
+	const char* sep = find_separator(tmp, size);
+	if (sep == NULL) {
+	    printf("error: no separator\n");
+	    free((void*)tmp);
+	    return 0;
+	}
+
+	const char* sep2 = find_separator(sep + 1, tmp+size-sep-1);
+	if (sep2 != NULL) {
+	    printf("error: more than one separator\n");
+	    free((void*)tmp);
+	    return 0;
+	}
+
+	g_file_mem_size = sep - tmp;
+	g_file_mem = malloc(g_file_mem_size + 1);
+	memcpy(g_file_mem, tmp, sep - tmp);
+	g_file_mem[sep - tmp] = '\0';
+
+	g_userinput_size = size - (sep - tmp) - SEPARATOR_SIZE;
+	g_userinput = malloc(g_userinput_size);
+	memcpy(g_userinput, sep + SEPARATOR_SIZE, g_userinput_size);
+	g_userinput_ptr = g_userinput;
+	g_userinput_end = g_userinput + g_userinput_size;
+
+	free((void*)tmp);
+    }
+
+    pmore2_inmemory(g_file_mem, g_file_mem_size, 0,
+	    NULL,
+	    NULL, NULL, NULL);
+
+
+    free(g_userinput);
+    free(g_file_mem);
 }
 
 #endif
