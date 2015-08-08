@@ -136,4 +136,6 @@ pfterm: pfterm.c
 	$(CC) -o pfterm -D_PFTERM_TEST_MAIN pfterm.c
 pmore: pmore.c
 	$(CC) -o pmore -I../include -Wno-invalid-source-encoding -g -DFUZZY_PMORE_MAIN pmore.c ../common/osdep/strlcpy.c ../common/sys/string.c ../common/sys/vtkbd.c
+edit: edit.c
+	$(CC) -o edit -I../include -DFUZZ edit.c ../common/osdep/strlcpy.c ../common/sys/string.c ../common/sys/vtkbd.c -Wno-invalid-source-encoding -g
 

@@ -39,6 +39,13 @@
  */
 #include "bbs.h"
 
+#ifdef FUZZ
+#undef ISDBCSAWARE
+#define ISDBCSAWARE()	(1)
+#define DEBUG
+#define SLOW_CHECK_DETAIL
+#endif
+
 #define EDIT_SIZE_LIMIT (32768*1024)
 #define EDIT_LINE_LIMIT (65530) // (1048576)
 
@@ -1271,10 +1278,14 @@ ask_tmpbuf(int y)
     char choice[2];
 
     msg[19] = fp_buf[4];
+#ifdef FUZZ
+    choice[0] = '0' + vkey() % 10;
+#else
     do {
 	if (!getdata(y, 0, msg, choice, sizeof(choice), DOECHO))
 	    choice[0] = fp_buf[4];
     } while (choice[0] < '0' || choice[0] > '9');
+#endif
     fp_buf[4] = choice[0];
     return fp_buf;
 }
@@ -1302,6 +1313,7 @@ read_tmpbuf(int n)
 	n = tmpf[4] - '0';
     }
 
+#ifndef FUZZ
     setuserfile(fp_tmpbuf, tmpf);
     if (n != 0 && n != 5 && more(fp_tmpbuf, NA) != -1)
 	getdata(b_lines - 1, 0, "確定讀入嗎(Y/N)?[Y]", ans, sizeof(ans), LCECHO);
@@ -1309,6 +1321,7 @@ read_tmpbuf(int n)
 	load_file(fp, -1);
 	fclose(fp);
     }
+#endif
 }
 
 static void
@@ -1319,6 +1332,7 @@ write_tmpbuf(void)
     textline_t     *p;
     off_t	    sz = 0;
 
+#ifndef FUZZ
     setuserfile(fp_tmpbuf, ask_tmpbuf(3));
     if (dashf(fp_tmpbuf)) {
 	more(fp_tmpbuf, NA);
@@ -1344,6 +1358,7 @@ write_tmpbuf(void)
 	}
 	fclose(fp);
     }
+#endif
 }
 
 static void
@@ -1352,12 +1367,14 @@ erase_tmpbuf(void)
     char            fp_tmpbuf[80];
     char            ans[4] = "n";
 
+#ifndef FUZZ
     setuserfile(fp_tmpbuf, ask_tmpbuf(3));
     if (more(fp_tmpbuf, NA) != -1)
 	getdata(b_lines - 1, 0, "確定刪除嗎(Y/N)?[N]",
 		ans, sizeof(ans), LCECHO);
     if (*ans == 'y')
 	unlink(fp_tmpbuf);
+#endif
 }
 
 /**
@@ -1378,6 +1395,7 @@ auto_backup(void)
 
 	curr_buf->currline = NULL;
 
+#ifndef FUZZ
 	setuserfile(bakfile, fp_bak);
 	if ((fp = fopen(bakfile, "w"))) {
 	    for (p = curr_buf->firstline; p != NULL && count < 512; p = v, count++) {
@@ -1387,6 +1405,7 @@ auto_backup(void)
 	    }
 	    fclose(fp);
 	}
+#endif
     }
 }
 
@@ -1398,6 +1417,7 @@ restore_backup(void)
 {
     char            bakfile[80], buf[80], ans[3];
 
+#ifndef FUZZ
     setuserfile(bakfile, fp_bak);
     while (dashf(bakfile)) {
 	vs_hdr("編輯器自動復原");
@@ -1421,6 +1441,7 @@ restore_backup(void)
         }
         Rename(bakfile, buf);
     }
+#endif
 }
 
 /* 引用文章 */
@@ -1478,6 +1499,7 @@ quote_strip_ansi_inline(unsigned char *is)
     *os = 0;
 }
 
+#ifndef FUZZ
 static void
 do_quote(void)
 {
@@ -1563,6 +1585,7 @@ do_quote(void)
 	}
     }
 }
+#endif  // FUZZ
 
 /**
  * 審查 user 引言的使用
@@ -1600,8 +1623,13 @@ check_quote(void)
 
 	    getdata(12, 12, "(E)繼續編輯 (W)強制寫入？[E] ",
 		    ans, sizeof(ans), LCECHO);
+#ifdef FUZZ
+	    if (vkey() % 2 == 0)
+		return 0;
+#else
 	    if (ans[0] == 'w')
 		return 0;
+#endif
 	}
 	return 1;
     }
@@ -1635,6 +1663,7 @@ read_file(const char *fpath, int splitSig)
     return 0;
 }
 
+#ifndef FUZZ
 void
 write_header(FILE * fp,  const char *mytitle)
 {
@@ -1738,6 +1767,7 @@ write_header(FILE * fp,  const char *mytitle)
     }
     fprintf(fp, "標題: %s\n時間: %s\n", mytitle, ctime4(&now));
 }
+#endif  // FUZZ
 
 off_t
 loadsitesig(const char *fname)
@@ -1746,6 +1776,7 @@ loadsitesig(const char *fname)
     off_t sz = 0, ret = -1;
     char *start, *sp;
 
+#ifndef FUZZ
     sz = dashs(fname);
     if (sz < 1)
 	return -1;
@@ -1778,9 +1809,11 @@ loadsitesig(const char *fname)
     }
 
     close(fd);
+#endif
     return ret;
 }
 
+#ifndef FUZZ
 void
 addforwardsignature(FILE *fp, const char *host) {
     char temp[33];
@@ -1904,6 +1937,7 @@ get_string_entropy(const char *s)
     return ent;
 }
 #endif
+#endif  // FUZZ
 
 #ifdef EXP_EDIT_UPLOAD
 static void upload_file(void);
@@ -1916,6 +1950,10 @@ static int
 write_file(const char *fpath, int saveheader, char mytitle[STRLEN],
            int flags, int *pentropy)
 {
+#ifdef FUZZ
+    int a[] = { EDIT_ABORTED, KEEP_EDITING, 0 };
+    return a[vkey() % 3];
+#else
     FILE           *fp = NULL;
     textline_t     *p;
     char            ans[TTLEN], *msg;
@@ -2069,6 +2107,7 @@ write_file(const char *fpath, int saveheader, char mytitle[STRLEN],
     }
 
     fclose(fp);
+#endif
     return 0;
 }
 
@@ -2126,6 +2165,7 @@ block_save_to_file(const char *fname, int mode)
 
     setup_block_begin_end(&begin, &end);
 
+#ifndef FUZZ
     setuserfile(fp_tmpbuf, fname);
     if ((fp = fopen(fp_tmpbuf, mode == BLOCK_APPEND ? "a+" : "w+"))) {
 
@@ -2136,6 +2176,7 @@ block_save_to_file(const char *fname, int mode)
 	fprintf(fp, "%s\n", end->data);
 	fclose(fp);
     }
+#endif
 }
 
 /**
@@ -2243,8 +2284,12 @@ block_prompt(void)
     move(b_lines - 1, 0);
     clrtoeol();
 
+#ifdef FUZZ
+    choice[0] = '0' + vkey() % 10;
+#else
     if (!getdata(b_lines - 1, 0, "把區塊移至暫存檔 (0:Cut, 5:Copy, 6-9, q: Cancel)[0] ", choice, sizeof(choice), LCECHO))
 	choice[0] = '0';
+#endif
 
     if (choice[0] < '0' || choice[0] > '9')
 	goto cancel_block;
@@ -2259,6 +2304,7 @@ block_prompt(void)
     }
 
     tmpfname[4] = choice[0];
+#ifndef FUZZ
     setuserfile(fp_tmpbuf, tmpfname);
     if (dashf(fp_tmpbuf)) {
 	more(fp_tmpbuf, NA);
@@ -2271,6 +2317,7 @@ block_prompt(void)
 
     if (vans("刪除區塊(Y/N)?[N] ") != 'y')
 	goto cancel_block;
+#endif
 
     block_save_to_file(tmpfname, mode[0] == 'a' ? BLOCK_APPEND : BLOCK_TRUNCATE);
 
@@ -2291,6 +2338,48 @@ block_select(void)
 #define PMORE_USE_ASCII_MOVIE // disable this if you don't enable ascii movie
 #define ENABLE_PMORE_ASCII_MOVIE_SYNTAX // disable if you don't want rich colour syntax
 
+unsigned char *
+mf_movieFrameHeader(unsigned char *p, unsigned char *end)
+{
+    // ANSI has ESC_STR [8m as "Conceal" but
+    // not widely supported, even PieTTY.
+    // So let's go back to fixed format...
+    static char *patHeader = "==" ESC_STR "[30;40m^L";
+    static char *patHeader2= ESC_STR "[30;40m^L"; // patHeader + 2; // "=="
+    // static char *patHeader3= ESC_STR "[m^L";
+    static size_t szPatHeader   = 12; // strlen(patHeader);
+    static size_t szPatHeader2  = 10; // strlen(patHeader2);
+    // static size_t szPatHeader3  = 5;  // strlen(patHeader3);
+
+    size_t sz = end - p;
+
+    if (sz < 1) return NULL;
+    if (*p == 12)        // ^L
+        return p+1;
+
+    if (sz < 2) return NULL;
+    if ( *p == '^' &&
+            *(p+1) == 'L')
+        return p+2;
+
+    // Add more frame headers
+
+    /* // *[m seems not so common, skip.
+    if (sz < szPatHeader3) return NULL;
+    if (memcmp(p, patHeader3, szPatHeader3) == 0)
+        return p + szPatHeader3;
+        */
+
+    if (sz < szPatHeader2) return NULL;
+    if (memcmp(p, patHeader2, szPatHeader2) == 0)
+        return p + szPatHeader2;
+
+    if (sz < szPatHeader) return NULL;
+    if (memcmp(p, patHeader, szPatHeader) == 0)
+        return p + szPatHeader;
+
+    return NULL;
+}
 #ifdef PMORE_USE_ASCII_MOVIE
 // pmore movie header support
 unsigned char *
@@ -3030,7 +3119,15 @@ prompt_goto_line(void)
 {
     char buf[10];
 
+#ifdef FUZZ
+    buf[0]='0' + vkey() % 10;
+    buf[1]='0' + vkey() % 10;
+    buf[2]='0' + vkey() % 10;
+    buf[3]='0' + vkey() % 10;
+    buf[4]='\0';
+#else
     if (getdata(b_lines - 1, 0, "跳至第幾行:", buf, sizeof(buf), DOECHO))
+#endif
 	goto_line(atoi(buf));
 }
 
@@ -3060,8 +3157,12 @@ search_str(int mode)
 	if (getdata_buf(b_lines - 1, 0, "[搜尋]關鍵字:",
 			str, max_keyword, DOECHO))
 	    if (*str) {
+#ifdef FUZZ
+		if (vkey() % 2)
+#else
 		if (getdata(b_lines - 1, 0, "區分大小寫(Y/N/Q)? [N] ",
 			    ans, sizeof(ans), LCECHO) && *ans == 'y')
+#endif
 		    curr_buf->substr_fp = strstr;
 		else
 		    curr_buf->substr_fp = strcasestr;
@@ -3552,17 +3653,11 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
     char            last = 0;	/* the last key you press */
     int             ch, tmp;
 
-    int             mode0 = currutmp->mode;
-    int             destuid0 = currutmp->destuid;
     int             money = 0, entropy = 0;
     int             interval = 0;
     time4_t         th = now;
-    int             count = 0, tin = 0, quoted = 0;
-    char            trans_buffer[256];
+    int             count = 0, tin = 0;
 
-    STATINC(STAT_VEDIT);
-    currutmp->mode = EDITING;
-    currutmp->destuid = currstat;
 
 #ifdef DBCSAWARE
     mbcs_mode = ISDBCSAWARE() ? 1 : 0;
@@ -3579,12 +3674,6 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
 	    return tmp;
     }
 
-    if (*quote_file) {
-	do_quote();
-	*quote_file = '\0';
-	quoted = 1;
-    }
-
     if(	curr_buf->oldcurrline != curr_buf->firstline ||
 	curr_buf->currline != curr_buf->firstline) {
 	/* we must adjust because cursor (currentline) moved. */
@@ -3598,12 +3687,6 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
     /* No matter you quote or not, just start the cursor from (0,0) */
     curr_buf->currpnt = curr_buf->currln = curr_buf->curr_window_line =
     curr_buf->edit_margin = curr_buf->last_margin = 0;
-
-    /* if quote, move to end of file. */
-    if(quoted)
-    {
-	/* maybe do this in future. */
-    }
 
     while (1) {
 	edit_check_healthy();
@@ -3724,8 +3807,6 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
                 tmp = write_file(fpath, saveheader, title, flags,
                                  &entropy);
 		if (tmp != KEEP_EDITING) {
-		    currutmp->mode = mode0;
-		    currutmp->destuid = destuid0;
 
 		    exit_edit_buffer();
 
@@ -3755,10 +3836,12 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
 		break;
 	    case Ctrl('Q'):	/* Quit without saving */
 		grayout(0, b_lines-1, GRAYOUT_DARK);
+#ifdef FUZZ
+		ch = "yn"[vkey() % 2];
+#else
 		ch = vmsg("結束但不儲存 [y/N]? ");
+#endif
 		if (ch == 'y' || ch == 'Y') {
-		    currutmp->mode = mode0;
-		    currutmp->destuid = destuid0;
 		    exit_edit_buffer();
 		    return -1;
 		}
@@ -3880,6 +3963,7 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
 		split(curr_buf->currline, curr_buf->currpnt, indent_space());
 		break;
 	    case Ctrl('G'):
+#ifndef FUZZ
 		{
 		    unsigned int    currstat0 = currstat;
 		    int mode0 = currutmp->mode;
@@ -3910,6 +3994,7 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
 			edit_window_adjust();
 		    }
 		}
+#endif
 		curr_buf->redraw_everything = YEA;
 		break;
 
@@ -3926,7 +4011,9 @@ vedit2(const char *fpath, int saveheader, char title[STRLEN], int flags)
 
 	    case KEY_F1:
 	    case Ctrl('Z'):	/* Help */
+#ifndef FUZZ
 		more("etc/ve.hlp", YEA);
+#endif
 		curr_buf->redraw_everything = YEA;
 		break;
 	    case Ctrl('L'):
@@ -4193,6 +4280,368 @@ veditfile(const char *fpath)
 {
     return vedit2(fpath, NA, NULL, 0);
 }
+
+#ifdef FUZZ
+
+// cache.c
+void setutmpmode(unsigned int mode) { }
+
+// term.c
+void bell() {}
+
+// vtuikit.c
+void vfill(int n, int flags, const char *s){}
+void prints(const char*fmt,...) {}
+void vs_footer(const char *caption, const char *msg) {}
+void vs_hdr(const char *title) {}
+void mvouts(int y, int x, const char *str) {}
+int vmsg(const char *msg) {
+    int i = 0;
+    do { i = vkey(); } while( i == 0 );
+    return i;
+}
+
+// pfterm.c
+void move(int x, int y) {}
+void clear() {}
+void outs(const char *s) { if (!s) return; while (*s) outc(*s++); }
+void outns(const char *s, int n) { if (!s) return; while (*s && n-- > 0) outc(*s++); }
+void scroll() {}
+void rscroll() {}
+void    clrtobot    (void) {}
+void    grayout     (int y, int end, int level) {}
+void outc(unsigned char c) { }
+void clrtoeol(void) {}
+
+// record.c
+int append_record(const char *fpath, const void *record, size_t size) {return 0;}
+
+// ...
+void abort_bbs(int sig) {assert(0);}
+int t_users() {return 0;}
+
+static int
+getdata2vgetflag(int echo)
+{
+    assert(echo != GCARRY);
+
+    if (echo == LCECHO)
+	echo = VGET_LOWERCASE;
+    else if (echo == NUMECHO)
+	echo = VGET_DIGITS;
+    else if (echo == NOECHO)
+	echo = VGETSET_NOECHO;
+    else if (echo == PASSECHO)
+	echo = VGETSET_PASSWORD;
+    else
+	echo = VGET_DEFAULT;
+
+    return echo;
+}
+int
+getdata_buf(int line, int col, const char *prompt, char *buf, int len, int echo)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), buf);
+}
+
+int
+getdata_str(int line, int col, const char *prompt, char *buf, int len, int echo,
+            const char *defaultstr)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), defaultstr);
+}
+
+int
+getdata(int line, int col, const char *prompt, char *buf, int len, int echo)
+{
+    return vgetstr(buf, len, getdata2vgetflag(echo), "");
+}
+
+#ifdef DBCSAWARE
+#   define CHKDBCSTRAIL(_buf,_i) (ISDBCSAWARE() && DBCS_Status(_buf, _i) == DBCS_TRAILING)
+#else  // !DBCSAWARE
+#   define CHKDBCSTRAIL(buf,i) (0)
+#endif // !DBCSAWARE
+
+int
+vgetstr(char *_buf, int len, int flags, const char *defstr)
+{
+    // rt.iend points to NUL address, and
+    // rt.icurr points to cursor.
+    int line, col;
+    int abort = 0, dirty = 0;
+    int c = 0;
+
+    // callback
+
+    // always use internal buffer to prevent temporary input issue.
+    char buf[STRLEN] = "";  // zero whole.
+
+    // runtime structure
+    VGET_RUNTIME    rt = { buf, len > STRLEN ? STRLEN : len };
+
+    // it is wrong to design input with larger buffer
+    // than STRLEN. Although we support large screen,
+    // inputting huge line will just make troubles...
+    if (len > STRLEN) len = STRLEN;
+    assert(len <= (int)sizeof(buf) && len >= 2);
+
+    // adjust flags
+    if (flags & (VGET_NOECHO | VGET_DIGITS))
+	flags |= VGET_NO_NAV_HISTORY;
+
+    // memset(buf, 0, len);
+    if (defstr && *defstr)
+    {
+	strlcpy(buf, defstr, len);
+	strip_ansi(buf, buf, STRIP_ALL); // safer...
+	rt.icurr = rt.iend = strlen(buf);
+    }
+
+
+    // main loop
+    while (!abort)
+    {
+	if (dirty)
+	{
+	    dirty = 0;
+	}
+
+	if (!(flags & VGET_NOECHO))
+	{
+	    // print current buffer
+	    SOLVE_ANSI_CACHE();
+	    clrtoeol();
+	    SOLVE_ANSI_CACHE();
+
+	    if (!(flags & VGET_TRANSPARENT))
+		outs(VCLR_INPUT_FIELD); // change color to prompt fields
+
+            if (flags & VGET_PASSWORD) {
+                int i;
+                for (i = 0; i < rt.iend; i++)  {
+                    outc('*');
+                }
+                for (; i < len; i++) {
+                    outc(' ');
+                }
+            } else {
+                vfill(len, 0, buf);
+            }
+
+	    if (!(flags & VGET_TRANSPARENT))
+		outs(ANSI_RESET);
+	} else {
+	    // to simulate the "clrtoeol" behavior...
+	    // XXX make this call only once? or not?
+	    clrtoeol();
+	}
+	c = vkey();
+
+
+	// standard key bindings
+	// note: if you processed anything, you must use 'continue' instead of 'break'.
+
+
+	// the basic keys
+	switch(c)
+	{
+	    // exiting keys
+	    case KEY_ENTER:
+		abort = 1;
+		continue;
+
+	    case Ctrl('C'):
+		rt.icurr = rt.iend = 0;
+		buf[0] = 0;
+		buf[1] = c; // XXX this is a dirty hack...
+		abort = 1;
+		continue;
+
+	    // standard editing keys: backspace
+	    case KEY_BS:
+		if (rt.icurr > 0) {
+		    // kill previous one charracter.
+		    memmove(buf+rt.icurr-1, buf+rt.icurr, rt.iend-rt.icurr+1);
+		    rt.icurr--; rt.iend--;
+		    dirty = 1;
+		} else
+		    bell();
+		if (rt.icurr > 0 && CHKDBCSTRAIL(buf, rt.icurr)) {
+		    // kill previous one charracter.
+		    memmove(buf+rt.icurr-1, buf+rt.icurr, rt.iend-rt.icurr+1);
+		    rt.icurr--; rt.iend--;
+		    dirty = 1;
+		}
+		continue;
+	}
+
+	// all special keys were processed, now treat as 'input data'.
+
+	// content filter
+	if (c < ' ' || c >= 0xFF)
+	{
+	    bell(); continue;
+	}
+	if ((flags & VGET_DIGITS) &&
+		( !isascii(c) || !isdigit(c)))
+	{
+	    bell(); continue;
+	}
+	if (flags & VGET_LOWERCASE)
+	{
+	    if (!isascii(c))
+	    {
+		bell(); continue;
+	    }
+	    c = tolower(c);
+	}
+	if  (flags & VGET_ASCII_ONLY)
+	{
+	    if (!isascii(c) || !isprint(c))
+	    {
+		bell(); continue;
+	    }
+	}
+
+	// size check
+	if(rt.iend+1 >= len)
+	{
+	    bell(); continue;
+	}
+
+	// prevent incomplete DBCS
+	if (c > 0x80 && vkey_is_ready() &&
+		len - rt.iend < 3)	// we need 3 for DBCS+NUL.
+	{
+	    // XXX should we purge here, or wait the final DBCS_safe_trim?
+	    bell(); continue;
+	}
+
+	// size check again, due to data callback.
+	if(rt.iend+1 >= len)
+	{
+	    bell(); continue;
+	}
+
+	// add one character.
+	memmove(buf+rt.icurr+1, buf+rt.icurr, rt.iend-rt.icurr+1);
+	buf[rt.icurr++] = c;
+	rt.iend++;
+	dirty = 1;
+    }
+
+    assert(rt.iend >= 0 && rt.iend < len);
+    buf[rt.iend] = 0;
+
+    DBCS_safe_trim(buf);
+
+    // final filtering
+    if (rt.iend && (flags & VGET_LOWERCASE))
+	buf[0] = tolower(buf[0]);
+
+
+    // copy buffer!
+    memcpy(_buf, buf, len);
+
+
+    /* because some code then outs so change new line.*/
+
+    return rt.iend;
+}
+
+
+unsigned char* g_userinput;
+unsigned char* g_userinput_ptr;
+unsigned char* g_userinput_end;
+
+int vkey_is_ready(void) { return g_userinput_ptr != g_userinput_end; }
+int dogetch() {
+    unsigned char c;
+    if (g_userinput_ptr == g_userinput_end)
+	exit(0);
+    c = *g_userinput_ptr++;
+    if (c == KEY_CR) {
+	if (g_userinput_ptr < g_userinput_end &&
+		*g_userinput_ptr == KEY_LF)
+	    g_userinput_ptr++;
+	return KEY_ENTER;
+    } else if (c == KEY_LF)
+	return KEY_UNKNOWN;
+    return c;
+}
+
+static VtkbdCtx vtkbd_ctx;
+int vkey(void) {
+    int ch;
+
+    while (1)
+    {
+	ch = dogetch();
+
+	// convert virtual terminal keys
+	ch = vtkbd_process(ch, &vtkbd_ctx);
+	switch(ch)
+	{
+	    case KEY_INCOMPLETE:
+		// XXX what if endless?
+		continue;
+
+	    case KEY_ESC:
+		KEY_ESC_arg = vtkbd_ctx.esc_arg;
+		return ch;
+
+	    case KEY_UNKNOWN:
+		return ch;
+
+	    // common global hot keys...
+	    case Ctrl('L'):
+		continue;
+	}
+
+	return ch;
+    }
+    // should not reach here. just to make compiler happy.
+    return ch;
+}
+
+// var.c
+time4_t now = 0;
+int             KEY_ESC_arg;
+int             b_lines = 23; // bottom line of screen (= t_lines - 1)
+int             t_lines = 24; // term lines
+int             p_lines = 20; // 扣掉 header(3), footer(1), 畫面上可以顯示資料的行數
+int             t_columns = 80;
+
+int main(int argc, char *argv[])
+{
+    FILE *fp;
+    const char* filename_fn = argv[1];
+    const char* userinput_fn = argv[2];
+    struct stat     st;
+    if (argc < 3) {
+	printf("%s: filename_fn userinput_fn\n", argv[0]);
+	return 0;
+    }
+
+
+    size_t file_size = 0;
+    if (!stat(userinput_fn, &st))
+        file_size = st.st_size;
+    printf("file_size=%d\n", file_size);
+
+    g_userinput_ptr = g_userinput = malloc(file_size);
+    g_userinput_end = g_userinput + file_size;
+    fp = fopen(userinput_fn, "rb");
+    assert(fp);
+    fread(g_userinput, file_size, 1, fp);
+    fclose(fp);
+
+    veditfile(filename_fn);
+    free(g_userinput);
+    return 0;
+}
+#endif
 
 /* vim:sw=4:nofoldenable
  */
